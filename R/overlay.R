@@ -42,20 +42,3 @@ cameraOverlaySVG <- function(width = 1280, height = 960, ..., style = NULL) {
     ...
   )
 }
-
-#' Create HTML Overlay for Camera Viewfinder
-#'
-#' Generates an HTML overlay container for positioning DOM badges, status pills,
-#' and HUD widgets over the live viewfinder.
-#'
-#' @param ... Child HTML tags or widgets.
-#' @param style Optional CSS styling string.
-#' @return Shiny/htmltools tag object.
-#' @export
-cameraOverlayHTML <- function(..., style = NULL) {
-  htmltools::div(
-    class = "usb-camera-html-overlay",
-    style = paste("position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 16;", style %||% ""),
-    ...
-  )
-}

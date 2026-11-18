@@ -5,6 +5,27 @@
 (function() {
   'use strict';
 
+  // Defensive patch for Shiny: prevent Shiny's strict arity assertion
+  // (which throws "handler must be a function that takes one argument" when callback has 0 parameters)
+  // from ever crashing any widget or user script on this page.
+  const patchShinyHandler = () => {
+    if (window.Shiny && typeof Shiny.addCustomMessageHandler === 'function' && !Shiny.__usbCameraArityPatched) {
+      const origAddHandler = Shiny.addCustomMessageHandler;
+      Shiny.addCustomMessageHandler = function(type, handler) {
+        if (typeof handler === 'function' && handler.length !== 1) {
+          const safeWrapper = function(msg) {
+            return handler(msg);
+          };
+          return origAddHandler.call(Shiny, type, safeWrapper);
+        }
+        return origAddHandler.call(Shiny, type, handler);
+      };
+      Shiny.__usbCameraArityPatched = true;
+    }
+  };
+  patchShinyHandler();
+  $(document).on('shiny:connected', patchShinyHandler);
+
   // Per-instance state registry keyed by Shiny module namespace ID
   window.USBCameraInstances = window.USBCameraInstances || {};
 
@@ -30,6 +51,7 @@
       this.reconnectTimer = null;
       this.streamInfo = null;
       this.isStartingWorkflow = false;
+      this.lastError = null;
 
       this.initDOMElements();
       this.bindShinyHandlers();
@@ -62,6 +84,14 @@
       if (level === 'error') console.error(fullMsg);
       else if (level === 'warn') console.warn(fullMsg);
       else console.log(fullMsg);
+
+      if (window.Shiny && typeof Shiny.setInputValue === 'function') {
+        Shiny.setInputValue(this.id + '-client_log', {
+          level: level,
+          message: fullMsg,
+          timestamp: Date.now()
+        }, { priority: 'event' });
+      }
     }
 
     reportStatus(working, message, activeDeviceLabel) {
@@ -105,9 +135,11 @@
         label: d.label || 'Camera'
       }));
 
+      this.log('info', `Reporting ${payload.length} devices to Shiny.`);
+
       const send = () => {
         if (window.Shiny && typeof Shiny.setInputValue === 'function') {
-          Shiny.setInputValue(this.id + '-devices', payload, { priority: 'event' });
+          Shiny.setInputValue(this.id + '-devices', JSON.stringify(payload), { priority: 'event' });
           return true;
         }
         return false;
@@ -167,10 +199,56 @@
       }
     }
 
+    async reportDiagnostics() {
+      let permState = 'unknown';
+      if (navigator.permissions && navigator.permissions.query) {
+        try {
+          const p = await navigator.permissions.query({ name: 'camera' });
+          permState = p.state;
+        } catch (e) {
+          permState = 'unsupported';
+        }
+      }
+
+      let rawDevs = [];
+      if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+        try {
+          const all = await navigator.mediaDevices.enumerateDevices();
+          rawDevs = all.filter(d => d.kind === 'videoinput').map((d, i) => ({
+            index: i + 1,
+            deviceId: d.deviceId ? (d.deviceId.substring(0, 10) + '...') : '(empty)',
+            label: d.label || '(masked/empty)',
+            groupId: d.groupId ? (d.groupId.substring(0, 10) + '...') : ''
+          }));
+        } catch (e) {
+          this.log('warn', `enumerateDevices diagnostic query failed: ${e.message}`);
+        }
+      }
+
+      const diag = {
+        mediaDevicesSupported: Boolean(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices),
+        isSecureContext: Boolean(window.isSecureContext),
+        origin: window.location.origin,
+        permissionState: permState,
+        rawDeviceCount: rawDevs.length,
+        rawDevices: rawDevs,
+        lastError: this.lastError ? `${this.lastError.name || 'Error'}: ${this.lastError.message || this.lastError}` : 'None',
+        isWorking: this.isWorking,
+        activeDevice: this.selectedDeviceId || ''
+      };
+
+      this.log('info', `Diagnostics: PermState=${permState}, VideoInputs=${rawDevs.length}, Error=${diag.lastError}`);
+
+      if (window.Shiny && typeof Shiny.setInputValue === 'function') {
+        Shiny.setInputValue(this.id + '-diagnostics', diag, { priority: 'event' });
+      }
+    }
+
     async probePermissions(forceProbe) {
       if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
         this.log('error', 'navigator.mediaDevices.enumerateDevices is not supported.');
         this.reportStatus(false, 'MediaDevices API not supported in this browser context.');
+        await this.reportDiagnostics();
         return [];
       }
 
@@ -180,15 +258,17 @@
       // If device labels are blank/masked, request permission once via getUserMedia
       const hasLabels = videoDevices.some(d => d.label && d.label.length > 0);
       if (!hasLabels || videoDevices.length === 0 || forceProbe) {
-        this.log('info', 'Camera permission not yet granted or labels masked. Requesting getUserMedia probe...');
+        this.log('info', 'Requesting getUserMedia probe to unmask device labels...');
         let probeStream = null;
         try {
           probeStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-          // CRITICAL: Call enumerateDevices WHILE probeStream is actively running so browser unmasks labels!
+          // Call enumerateDevices WHILE probeStream is actively running so browser unmasks labels!
           devices = await navigator.mediaDevices.enumerateDevices();
           videoDevices = devices.filter(d => d.kind === 'videoinput');
+          this.lastError = null;
           this.log('info', `Device probe successful. Discovered ${videoDevices.length} video inputs.`);
         } catch (e) {
+          this.lastError = e;
           this.log('warn', `Camera permission probe error: ${e.name} - ${e.message}`);
           this.reportStatus(false, `Camera permission needed: ${e.message}`);
         } finally {
@@ -200,11 +280,12 @@
           }
         }
       } else {
-        this.log('info', `Using cached camera list (${videoDevices.length} devices with labels).`);
+        this.log('info', `Using existing device list (${videoDevices.length} devices with labels).`);
       }
 
       this.devices = videoDevices;
       this.reportDevices();
+      await this.reportDiagnostics();
       return videoDevices;
     }
 
@@ -267,7 +348,6 @@
       }
 
       // 2. If regex/filter was provided (non-empty), ONLY select if a device matches!
-      // Absolutely no fallback to single camera or default camera!
       if (filterVal.length > 0) {
         const match = devices.find(d => this.matchesFilter(d.label || '', filterVal));
         if (match) {
@@ -297,6 +377,7 @@
         if (videoDevices.length === 0) {
           this.reportStatus(false, 'No video input devices found.');
           this.showNoMatchOverlay(this.options.filter, []);
+          await this.reportDiagnostics();
           return;
         }
 
@@ -305,14 +386,17 @@
           this.stopStream();
           const devLabels = videoDevices.map(d => d.label || 'Unlabeled Camera').join(', ');
           this.reportStatus(false, `No camera matched filter: "${this.options.filter}". Available: [${devLabels}]`);
+          await this.reportDiagnostics();
           return;
         }
 
         await this.startStream(targetDevice.deviceId, targetDevice.label);
       } catch (e) {
+        this.lastError = e;
         this.reportStatus(false, `Initialization error: ${e.message}`);
       } finally {
         this.isStartingWorkflow = false;
+        await this.reportDiagnostics();
       }
     }
 
@@ -371,12 +455,15 @@
       }
 
       if (!stream) {
+        this.lastError = lastError;
         this.reportStatus(false, `Failed to acquire video stream: ${lastError ? lastError.message : 'Unknown'}`);
+        await this.reportDiagnostics();
         return;
       }
 
       this.currentStream = stream;
       this.selectedDeviceId = deviceId;
+      this.lastError = null;
       this.hideNoMatchOverlay();
 
       const track = stream.getVideoTracks()[0];
@@ -386,6 +473,7 @@
         this.videoEl.srcObject = stream;
         this.videoEl.onloadedmetadata = () => {
           this.reportStreamInfo();
+          this.reportDiagnostics();
         };
         try {
           await this.videoEl.play();
@@ -398,6 +486,7 @@
       this.reportStatus(true, activeLabel, activeLabel);
       this.reportDevices();
       this.reportStreamInfo();
+      await this.reportDiagnostics();
 
       // Listen for unexpected track termination (e.g. cable unplugged)
       track.onended = () => {
@@ -523,50 +612,94 @@
       return payload;
     }
 
+    addSafeHandler(suffix, handler) {
+      if (!window.Shiny || !Shiny.addCustomMessageHandler) return;
+      const type = this.id + '-' + suffix;
+      // Always pass a function with formal arity 1 so Shiny's check (handler.length === 1) is unconditionally satisfied.
+      Shiny.addCustomMessageHandler(type, (msg) => {
+        try {
+          const res = handler.call(this, msg);
+          if (res && typeof res.catch === 'function') {
+            res.catch(err => {
+              this.log('error', `Async error in handler '${suffix}': ${err.message}`, err.stack);
+            });
+          }
+          return res;
+        } catch (err) {
+          this.log('error', `Error executing handler '${suffix}': ${err.message}`, err.stack);
+        }
+      });
+    }
+
     bindShinyHandlers() {
       $(document).on('shiny:connected shiny:sessioninitialized', () => {
         this.reportDevices();
+        this.reportDiagnostics();
         if (this.isWorking) {
           this.reportStatus(true, this.videoEl ? this.videoEl.title || 'Connected' : 'Connected', this.selectedDeviceId);
           this.reportStreamInfo();
         }
       });
 
-      if (!window.Shiny || !Shiny.addCustomMessageHandler) return;
+      this.addSafeHandler('capture', (msg) => this.capture(msg || {}));
 
-      Shiny.addCustomMessageHandler(this.id + '-capture', (msg) => {
-        this.capture(msg || {});
-      });
-
-      Shiny.addCustomMessageHandler(this.id + '-setOrientation', (msg) => {
+      this.addSafeHandler('setOrientation', (msg) => {
         if (!msg) return;
         this.setOrientation(msg.rotation, msg.flipH, msg.flipV);
       });
 
-      Shiny.addCustomMessageHandler(this.id + '-setReticle', (msg) => {
+      this.addSafeHandler('setReticle', (msg) => {
         this.setReticle(Boolean(msg && msg.visible), msg);
       });
 
-      Shiny.addCustomMessageHandler(this.id + '-setZoom', (msg) => {
+      this.addSafeHandler('setZoom', (msg) => {
         this.setZoom(Boolean(msg && msg.isZoomed));
       });
 
-      Shiny.addCustomMessageHandler(this.id + '-getDevices', () => {
+      this.addSafeHandler('getDevices', () => {
         this.log('info', 'Received getDevices request from Shiny.');
         this.probePermissions(true).then(() => this.reportDevices());
       });
 
-      Shiny.addCustomMessageHandler(this.id + '-getStreamInfo', () => {
+      this.addSafeHandler('getDiagnostics', () => {
+        this.reportDiagnostics();
+      });
+
+      this.addSafeHandler('requestPermissionPrompt', async () => {
+        this.log('info', 'User explicitly requested camera permission prompt from button.');
+        try {
+          const probe = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          this.log('info', 'Camera permission GRANTED!');
+          probe.getTracks().forEach(t => t.stop());
+          this.lastError = null;
+          await this.startDeviceWorkflow();
+        } catch (err) {
+          this.lastError = err;
+          this.log('error', `Manual permission prompt failed: ${err.name} - ${err.message}`);
+          this.reportStatus(false, `Permission failed: ${err.message}`);
+        }
+        await this.reportDiagnostics();
+      });
+
+      this.addSafeHandler('getStreamInfo', () => {
         this.reportStreamInfo();
       });
 
-      Shiny.addCustomMessageHandler(this.id + '-setOverlayHTML', (msg) => {
+      this.addSafeHandler('setOverlaySVG', (msg) => {
         if (this.customOverlayEl) {
-          this.customOverlayEl.innerHTML = (msg && msg.html) ? msg.html : '';
+          const content = (msg && (msg.svg || msg.html)) ? (msg.svg || msg.html) : '';
+          this.customOverlayEl.innerHTML = content;
         }
       });
 
-      Shiny.addCustomMessageHandler(this.id + '-configure', (msg) => {
+      this.addSafeHandler('setOverlayHTML', (msg) => {
+        if (this.customOverlayEl) {
+          const content = (msg && (msg.svg || msg.html)) ? (msg.svg || msg.html) : '';
+          this.customOverlayEl.innerHTML = content;
+        }
+      });
+
+      this.addSafeHandler('configure', (msg) => {
         if (!msg) return;
         if (msg.filter !== undefined) this.options.filter = msg.filter;
         if (msg.preferredWidth !== undefined) this.options.preferredWidth = msg.preferredWidth;
@@ -575,7 +708,7 @@
         this.startDeviceWorkflow();
       });
 
-      Shiny.addCustomMessageHandler(this.id + '-selectDevice', (msg) => {
+      this.addSafeHandler('selectDevice', (msg) => {
         if (msg && msg.deviceId) {
           const device = this.devices.find(d => d.deviceId === msg.deviceId);
           const label = device ? device.label : 'Selected Camera';
@@ -589,18 +722,33 @@
 
   // Global factory function called on widget creation
   window.initUSBCamera = function(id, options) {
-    if (window.USBCameraInstances[id]) {
-      const existing = window.USBCameraInstances[id];
-      if (options && options.filter !== undefined) {
-        existing.options.filter = options.filter;
+    try {
+      if (window.USBCameraInstances[id]) {
+        const existing = window.USBCameraInstances[id];
+        if (options && options.filter !== undefined) {
+          existing.options.filter = options.filter;
+        }
+        existing.reportDevices();
+        existing.reportStreamInfo();
+        existing.reportDiagnostics();
+        return existing;
       }
-      existing.reportDevices();
-      existing.reportStreamInfo();
-      return existing;
+      const inst = new USBCameraInstance(id, options);
+      window.USBCameraInstances[id] = inst;
+      return inst;
+    } catch (err) {
+      console.error(`[USBCamera:${id}] FATAL INITIALIZATION ERROR:`, err);
+      const container = document.getElementById(id + '-container');
+      if (container) {
+        container.innerHTML = `
+          <div style="position: absolute; inset: 0; background: #7f1d1d; color: #fef2f2; padding: 20px; font-family: monospace; z-index: 9999; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;">
+            <div style="font-weight: bold; font-size: 16px; margin-bottom: 8px;">USBCamera Initialization Error</div>
+            <div style="font-size: 13px; max-width: 90%; word-break: break-word;">${err.message || err}</div>
+            <div style="font-size: 11px; margin-top: 10px; color: #fca5a5;">Check browser console for details.</div>
+          </div>
+        `;
+      }
     }
-    const inst = new USBCameraInstance(id, options);
-    window.USBCameraInstances[id] = inst;
-    return inst;
   };
 
   // Device change listener on mediaDevices
@@ -610,7 +758,7 @@
       for (const id in window.USBCameraInstances) {
         const inst = window.USBCameraInstances[id];
         if (inst) {
-          await inst.probePermissions();
+          await inst.probePermissions(true);
           if (!inst.isWorking && inst.options.autoConnect) {
             inst.startDeviceWorkflow();
           }

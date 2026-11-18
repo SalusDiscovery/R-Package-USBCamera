@@ -3,6 +3,19 @@
 #' Embeds a high-reliability WebRTC camera viewfinder with real-time CSS transformations,
 #' status badge, flash feedback, and overlay slots.
 #'
+#' @details
+#' \strong{Browser Security & Environment Requirements:}
+#' \itemize{
+#'   \item \strong{Secure Context Required:} WebRTC (navigator.mediaDevices.getUserMedia) is only
+#'     permitted in secure contexts: https:// or local loopback (http://localhost or http://127.0.0.1).
+#'   \item \strong{RStudio Viewer Pane Limitation:} On macOS and Linux, the embedded RStudio Viewer pane
+#'     lacks camera privacy entitlements. Calling camera APIs from inside the Viewer pane is
+#'     immediately rejected with NotAllowedError without displaying a prompt.
+#'   \item \strong{User Gesture for Permission Prompts:} Modern browsers suppress automatic permission prompts
+#'     initiated on page load without user interaction. Provide an explicit actionButton wired to
+#'     \code{cam$request_permission()} so users can trigger the prompt via a direct click gesture.
+#' }
+#'
 #' @param id Shiny module namespace ID.
 #' @param width Viewport CSS width (e.g. "100%", "640px").
 #' @param height Viewport CSS height (e.g. "480px", "600px").
@@ -117,6 +130,20 @@ usbCameraControlsUI <- function(id) {
 #' Manages camera connection state, device listing, orientation calibration,
 #' frame capture, stream properties, and conversion to EBImage objects.
 #'
+#' @details
+#' \strong{Architecture & Error Handling Nuances for App Developers:}
+#' \itemize{
+#'   \item \strong{Monitoring Connection Status:} Observe \code{cam$status()} to detect connection drops,
+#'     temporary USB cable unplugs, or hardware bus resets.
+#'   \item \strong{Diagnosing Permission & Driver Issues:} If cameras are attached but no video appears, inspect
+#'     \code{cam$diagnostics()} for permissionState and lastError.
+#'   \item \strong{Shiny Custom Message Handler Arity:} Shiny's JavaScript runtime enforces that all callbacks
+#'     have an arity of 1 (handler.length === 1).
+#'   \item \strong{Device List Polymorphism:} Browser WebRTC engines serialize device lists into either column-oriented
+#'     lists or row-oriented JSON arrays. \code{cam$devices()} automatically normalizes all variations into a
+#'     standardized \code{data.frame}.
+#' }
+#'
 #' @param id Shiny module namespace ID.
 #' @param filter Regex or string pattern used to auto-select a specific camera by label
 #'   (e.g., "dino|microscope", "Logitech", or "Cypress").
@@ -127,6 +154,7 @@ usbCameraControlsUI <- function(id) {
 #'     \item{status}{Reactive list with fields: \code{working} (logical), \code{message} (character), \code{activeDevice} (character).}
 #'     \item{devices}{Reactive data frame of discovered cameras (\code{deviceId}, \code{label}).}
 #'     \item{stream_info}{Reactive list of hardware stream properties: \code{width}, \code{height}, \code{frameRate}, \code{aspectRatio}, \code{channels}, \code{bitDepth}, \code{colorMode}, \code{label}.}
+#'     \item{diagnostics}{Reactive list of browser permission state, origin security, raw device count, and last error.}
 #'     \item{snapshot}{Reactive list representing the latest captured frame, containing \code{raw_bytes}, \code{data_url}, \code{width}, \code{height}, \code{channels}, \code{bit_depth}, \code{color_mode}, \code{time_str}, and helper methods \code{as_ebimage()} and \code{save(path)}.}
 #'     \item{capture(format = "jpeg", quality = 0.95)}{Function triggering an immediate capture.}
 #'     \item{set_orientation(rotation, flip_h, flip_v)}{Function updating orientation calibration.}
@@ -137,6 +165,8 @@ usbCameraControlsUI <- function(id) {
 #'     \item{configure(filter, preferred_resolution)}{Function dynamically updating camera filter or resolution.}
 #'     \item{refresh_devices()}{Function triggering a hardware device rescan.}
 #'     \item{refresh_stream_info()}{Function requesting updated live stream metadata from the browser.}
+#'     \item{request_permission()}{Function requesting browser camera permission prompt via user gesture.}
+#'     \item{refresh_diagnostics()}{Function querying updated permission state and raw devices.}
 #'   }
 #' @export
 usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960), auto_connect = TRUE) {
@@ -144,6 +174,16 @@ usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960)
 
     status_rv <- shiny::reactiveVal(list(working = FALSE, message = "Offline", activeDevice = ""))
     devices_rv <- shiny::reactiveVal(data.frame(deviceId = character(0), label = character(0), stringsAsFactors = FALSE))
+    diagnostics_rv <- shiny::reactiveVal(list(
+      mediaDevicesSupported = TRUE,
+      isSecureContext = TRUE,
+      origin = "",
+      permissionState = "unknown",
+      rawDeviceCount = 0,
+      rawDevices = list(),
+      lastError = "None",
+      isWorking = FALSE
+    ))
     stream_info_rv <- shiny::reactiveVal(list(
       width = 0,
       height = 0,
@@ -158,8 +198,16 @@ usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960)
     snapshot_rv <- shiny::reactiveVal(NULL)
 
     # Initial device scan request
-    session$sendCustomMessage(session$ns("getDevices"), list())
-    session$sendCustomMessage(session$ns("getStreamInfo"), list())
+    shiny::observe({
+      session$sendCustomMessage(session$ns("configure"), list(
+        filter = as.character(filter %||% ""),
+        preferredWidth = preferred_resolution[1],
+        preferredHeight = preferred_resolution[2]
+      ))
+      session$sendCustomMessage(session$ns("getDevices"), list())
+      session$sendCustomMessage(session$ns("getStreamInfo"), list())
+      session$sendCustomMessage(session$ns("getDiagnostics"), list())
+    })
 
     # Receive status updates from browser
     shiny::observeEvent(input$status, {
@@ -173,26 +221,26 @@ usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960)
       stream_info_rv(input$stream_info)
     })
 
+    # Receive diagnostics from browser
+    shiny::observeEvent(input$diagnostics, {
+      req(input$diagnostics)
+      diagnostics_rv(input$diagnostics)
+    })
+
+    # Mirror browser console logs to R console
+    shiny::observeEvent(input$client_log, {
+      req(input$client_log)
+      cat(sprintf("%s\n", input$client_log$message))
+    })
+
     # Receive enumerated device list from browser
     shiny::observeEvent(input$devices, {
-      req(input$devices)
-      df <- tryCatch({
-        if (is.data.frame(input$devices)) {
-          input$devices
-        } else if (is.list(input$devices)) {
-          data.frame(
-            deviceId = vapply(input$devices, function(x) as.character(x$deviceId %||% ""), character(1)),
-            label = vapply(input$devices, function(x) as.character(x$label %||% ""), character(1)),
-            stringsAsFactors = FALSE
-          )
-        } else {
-          data.frame(deviceId = character(0), label = character(0), stringsAsFactors = FALSE)
-        }
-      }, error = function(e) {
-        data.frame(deviceId = character(0), label = character(0), stringsAsFactors = FALSE)
-      })
+      cat("[DEBUG R] input$devices triggered! raw class:", class(input$devices), "\n")
+      df <- parse_camera_devices(input$devices)
+      cat("[DEBUG R] parsed dataframe nrow:", nrow(df), "\n")
+      print(df)
       devices_rv(df)
-    })
+    }, ignoreNULL = FALSE)
 
     # Wire up built-in toolbar buttons if usbCameraControlsUI is present
     shiny::observeEvent(input$btn_capture, {
@@ -244,6 +292,7 @@ usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960)
       status = shiny::reactive(status_rv()),
       devices = shiny::reactive(devices_rv()),
       stream_info = shiny::reactive(stream_info_rv()),
+      diagnostics = shiny::reactive(diagnostics_rv()),
       snapshot = shiny::reactive(snapshot_rv()),
       capture = function(format = "jpeg", quality = 0.95) {
         session$sendCustomMessage(session$ns("capture"), list(format = format, quality = quality))
@@ -264,8 +313,16 @@ usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960)
       set_zoom = function(is_zoomed = TRUE) {
         session$sendCustomMessage(session$ns("setZoom"), list(isZoomed = as.logical(is_zoomed)))
       },
+      set_overlay = function(svg) {
+        svg_str <- if (inherits(svg, "shiny.tag") || inherits(svg, "shiny.tag.list")) as.character(svg) else as.character(svg %||% "")
+        session$sendCustomMessage(session$ns("setOverlaySVG"), list(svg = svg_str))
+      },
+      set_overlay_svg = function(svg) {
+        svg_str <- if (inherits(svg, "shiny.tag") || inherits(svg, "shiny.tag.list")) as.character(svg) else as.character(svg %||% "")
+        session$sendCustomMessage(session$ns("setOverlaySVG"), list(svg = svg_str))
+      },
       set_overlay_html = function(html) {
-        session$sendCustomMessage(session$ns("setOverlayHTML"), list(html = as.character(html %||% "")))
+        session$sendCustomMessage(session$ns("setOverlaySVG"), list(svg = as.character(html %||% "")))
       },
       select_device = function(device_id) {
         session$sendCustomMessage(session$ns("selectDevice"), list(deviceId = as.character(device_id)))
@@ -284,6 +341,12 @@ usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960)
       },
       refresh_stream_info = function() {
         session$sendCustomMessage(session$ns("getStreamInfo"), list())
+      },
+      request_permission = function() {
+        session$sendCustomMessage(session$ns("requestPermissionPrompt"), list())
+      },
+      refresh_diagnostics = function() {
+        session$sendCustomMessage(session$ns("getDiagnostics"), list())
       }
     )
   })
@@ -302,6 +365,54 @@ usb_camera_dependency <- function() {
     script = "usb_camera.js",
     stylesheet = "usb_camera.css"
   )
+}
+
+# Robust device list parser supporting data.frames, JSON strings, column lists, and row lists
+parse_camera_devices <- function(devs) {
+  if (is.null(devs) || length(devs) == 0) {
+    return(data.frame(deviceId = character(0), label = character(0), stringsAsFactors = FALSE))
+  }
+  # Handle JSON string representation passed from JS
+  if (is.character(devs) && length(devs) == 1 && nzchar(trimws(devs))) {
+    parsed <- tryCatch(jsonlite::fromJSON(devs), error = function(e) NULL)
+    if (!is.null(parsed)) {
+      return(parse_camera_devices(parsed))
+    }
+  }
+  if (is.data.frame(devs)) {
+    d_id <- if ("deviceId" %in% names(devs)) as.character(devs[["deviceId"]]) else character(nrow(devs))
+    d_lbl <- if ("label" %in% names(devs)) as.character(devs[["label"]]) else character(nrow(devs))
+    return(data.frame(deviceId = d_id, label = d_lbl, stringsAsFactors = FALSE))
+  }
+  if (is.list(devs) && !is.null(devs[["deviceId"]])) {
+    d_id <- as.character(devs[["deviceId"]])
+    d_lbl <- if (!is.null(devs[["label"]])) as.character(devs[["label"]]) else rep("Camera", length(d_id))
+    return(data.frame(deviceId = d_id, label = d_lbl, stringsAsFactors = FALSE))
+  }
+  if (is.list(devs)) {
+    d_id <- character(0)
+    d_lbl <- character(0)
+    for (item in devs) {
+      if (is.list(item)) {
+        id_val <- if (!is.null(item[["deviceId"]])) as.character(item[["deviceId"]]) else ""
+        lbl_val <- if (!is.null(item[["label"]])) as.character(item[["label"]]) else "Camera"
+        d_id <- c(d_id, id_val)
+        d_lbl <- c(d_lbl, lbl_val)
+      }
+    }
+    return(data.frame(deviceId = d_id, label = d_lbl, stringsAsFactors = FALSE))
+  }
+  # Handle interleaved character vector c(id1, label1, id2, label2)
+  if (is.character(devs) && length(devs) >= 2 && (length(devs) %% 2 == 0)) {
+    idx_id <- seq(1, length(devs), by = 2)
+    idx_lbl <- seq(2, length(devs), by = 2)
+    return(data.frame(
+      deviceId = as.character(devs[idx_id]),
+      label = as.character(devs[idx_lbl]),
+      stringsAsFactors = FALSE
+    ))
+  }
+  data.frame(deviceId = character(0), label = character(0), stringsAsFactors = FALSE)
 }
 
 # Internal null coalescing operator

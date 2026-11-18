@@ -27,6 +27,7 @@ A list of reactives and methods:
     \item{status}{Reactive list with fields: \code{working} (logical), \code{message} (character), \code{activeDevice} (character).}
     \item{devices}{Reactive data frame of discovered cameras (\code{deviceId}, \code{label}).}
     \item{stream_info}{Reactive list of hardware stream properties: \code{width}, \code{height}, \code{frameRate}, \code{aspectRatio}, \code{channels}, \code{bitDepth}, \code{colorMode}, \code{label}.}
+    \item{diagnostics}{Reactive list of browser permission state, origin security, raw device count, and last error.}
     \item{snapshot}{Reactive list representing the latest captured frame, containing \code{raw_bytes}, \code{data_url}, \code{width}, \code{height}, \code{channels}, \code{bit_depth}, \code{color_mode}, \code{time_str}, and helper methods \code{as_ebimage()} and \code{save(path)}.}
     \item{capture(format = "jpeg", quality = 0.95)}{Function triggering an immediate capture.}
     \item{set_orientation(rotation, flip_h, flip_v)}{Function updating orientation calibration.}
@@ -37,9 +38,25 @@ A list of reactives and methods:
     \item{configure(filter, preferred_resolution)}{Function dynamically updating camera filter or resolution.}
     \item{refresh_devices()}{Function triggering a hardware device rescan.}
     \item{refresh_stream_info()}{Function requesting updated live stream metadata from the browser.}
+    \item{request_permission()}{Function requesting browser camera permission prompt via user gesture.}
+    \item{refresh_diagnostics()}{Function querying updated permission state and raw devices.}
   }
 }
 \description{
 Manages camera connection state, device listing, orientation calibration,
 frame capture, stream properties, and conversion to EBImage objects.
+}
+\details{
+\strong{Architecture & Error Handling Nuances for App Developers:}
+\itemize{
+  \item \strong{Monitoring Connection Status:} Observe \code{cam$status()} to detect connection drops,
+    temporary USB cable unplugs, or hardware bus resets.
+  \item \strong{Diagnosing Permission & Driver Issues:} If cameras are attached but no video appears, inspect
+    \code{cam$diagnostics()} for permissionState and lastError.
+  \item \strong{Shiny Custom Message Handler Arity:} Shiny's JavaScript runtime enforces that all callbacks
+    have an arity of 1 (handler.length === 1).
+  \item \strong{Device List Polymorphism:} Browser WebRTC engines serialize device lists into either column-oriented
+    lists or row-oriented JSON arrays. \code{cam$devices()} automatically normalizes all variations into a
+    standardized \code{data.frame}.
+}
 }

@@ -41,9 +41,8 @@ ui <- fluidPage(
         label = "Active Overlay Layer:",
         choices = c(
           "None" = "none",
-          "SVG Calibration Grid (1280x960 Pixel Space)" = "svg",
-          "HTML HUD Status Pill" = "html",
-          "Built-in Crosshair Reticle" = "reticle"
+          "Built-in Crosshair Reticle" = "reticle",
+          "SVG Calibration Grid (1280x960 Pixel Space)" = "svg"
         ),
         selected = "none"
       ),
@@ -75,25 +74,24 @@ ui <- fluidPage(
         tabPanel(
           "Adding Overlays",
           br(),
-          h3("Designing Custom Overlays for Live Viewfinder"),
+          h3("Designing Custom SVG Overlays with 1:1 Pixel Alignment"),
           p(
-            "The USBCamera package allows rendering custom visual guides, calibration grids, reticles, ",
-            "and heads-up displays (HUD) directly over the live WebRTC stream. You can choose between ",
-            "two overlay paradigms depending on your application needs:"
+            "USBCamera utilizes SVG vector overlays for live viewfinder guides, calibration grids, reticles, ",
+            "and target regions of interest (ROI). SVG is uniquely suited for live camera streams because it offers ",
+            strong("rock-solid mathematical alignment directly to camera sensor pixels.")
           ),
           hr(),
-          h4("Section 1: SVG Overlays (Recommended for 1:1 Pixel Alignment)"),
+          h4("Why SVG Guarantees Perfect Sensor Pixel Mapping"),
           p(
-            strong("Why SVG is the easiest and most accurate route: "),
-            "The camera video is rendered inside a responsive container using CSS ",
-            tags$code("object-fit: contain"), ". By setting ",
-            tags$code("preserveAspectRatio=\"xMidYMid meet\""), " on an SVG overlay with a ",
+            "The camera video is rendered inside a responsive UI container using CSS ",
+            tags$code("object-fit: contain"), ". When container aspect ratios vary, the browser adds black letterboxing or pillarboxing bars. ",
+            "By setting ", tags$code("preserveAspectRatio=\"xMidYMid meet\""), " on an SVG overlay with a ",
             tags$code("viewBox=\"0 0 <width> <height>\""), ", the SVG's vector canvas scales and centers ",
             "using the exact same mathematical formula as the video stream. ",
             "Every SVG coordinate ", tags$code("(x, y)"), " directly targets that exact camera sensor pixel, ",
             "regardless of screen size, browser window resizing, or UI container aspect ratio!"
           ),
-          h5("SVG Example: Pixel-Exact Reticle & Calibration Grid"),
+          h4("SVG Example: Pixel-Exact Reticle & Calibration Grid"),
           tags$pre(
             tags$code(
 'library(USBCamera)
@@ -115,51 +113,58 @@ my_svg_overlay <- cameraOverlaySVG(
   tags$text(x = 345, y = 270, "Target Region [600 x 400 px]", fill = "#22c55e", font_size = "18px", font_family = "sans-serif")
 )
 
-# Embed in Shiny UI:
+# 1. Embed statically in Shiny UI:
 usbCameraUI("my_cam", width = "100%", height = "480px", overlay = my_svg_overlay)
+
+# 2. Or update dynamically from Shiny server:
+cam$set_overlay_svg(my_svg_overlay)
 '
             )
+          )
+        ),
+        tabPanel(
+          "Troubleshooting & Architecture Guide",
+          br(),
+          h3("Hardware & Browser Error Handling Nuances"),
+          p(
+            "Integrating hardware video capture into web applications involves browser security policies ",
+            "and operating system nuances that do not exist with purely server-side R packages. ",
+            "USBCamera handles these internally, but understanding them ensures robust deployment:"
           ),
           hr(),
-          h4("Section 2: HTML / CSS Overlays (For UI Badges, Buttons, & HUD Cards)"),
+          h4("1. Browser Permission Prompts & User Gestures"),
           p(
-            strong("How HTML overlays work: "),
-            "HTML elements inside an overlay layer are styled using CSS absolute positioning. ",
-            "Because the live video has black letterboxing/pillarboxing bars when container aspect ratios differ, ",
-            "using fixed pixel offsets (e.g. ", tags$code("left: 100px; top: 100px;"), ") will align with the ",
-            tags$em("container boundary"), ", not the camera frame. ",
-            "To achieve accurate placement with HTML, use percentage positioning or SVG ", tags$code("<foreignObject>"), ":"
+            "Modern browsers (especially macOS Chrome and Safari) frequently suppress automated ",
+            tags$code("getUserMedia()"), " calls on initial page load if not initiated by a direct user interaction. ",
+            "In production apps, provide an explicit button wired to ", tags$code("cam$request_permission()"),
+            " so the user can summon the browser dialog via a direct click gesture."
           ),
-          tags$ul(
-            tags$li(strong("Percentage Positioning: "), "Use ", tags$code("left: 50%; top: 50%; transform: translate(-50%, -50%);"), " to guarantee dead-center alignment over the camera frame."),
-            tags$li(strong("Viewport Corners: "), "Position badges at ", tags$code("top: 15px; right: 15px;"), " for HUD telemetry (e.g., live temperature, exposure settings, or status pills)."),
-            tags$li(strong("SVG ForeignObject: "), "Embed standard HTML tags inside an SVG ", tags$code("<foreignObject>"), " to bind HTML widgets directly to native SVG pixel coordinates.")
+          h4("2. RStudio Embedded Viewer Pane Limitation"),
+          p(
+            "On macOS and Linux, the embedded RStudio Viewer pane (Qt WebKit) lacks OS camera privacy entitlements. ",
+            "Attempting to connect to cameras inside the Viewer pane is immediately rejected with ",
+            tags$code("NotAllowedError"), " without ever displaying a prompt. ",
+            "Always run camera applications in an external browser (Google Chrome, Edge, or Safari)."
           ),
-          h5("HTML Example: Heads-Up Display (HUD) Status & Target Pill"),
-          tags$pre(
-            tags$code(
-'library(USBCamera)
-library(htmltools)
-
-# Define an HTML HUD overlay with a top-right status card and center alignment badge
-my_html_overlay <- cameraOverlayHTML(
-  # Top-Right Live Telemetry Card
-  div(
-    style = "position: absolute; top: 15px; right: 15px; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(4px); color: #f8fafc; padding: 6px 14px; border-radius: 8px; font-size: 12px; border: 1px solid rgba(255, 255, 255, 0.15); pointer-events: auto;",
-    tags$span(style = "color: #22c55e; font-weight: bold;", "\u25cf LIVE"),
-    tags$span(style = "margin-left: 8px;", "Optics Calibrated")
-  ),
-  # Centered Optical Target Badge
-  div(
-    style = "position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); border: 2px dashed rgba(56, 189, 248, 0.8); border-radius: 50%; width: 160px; height: 160px; pointer-events: none; display: flex; align-items: center; justify-content: center;",
-    span(style = "color: rgba(56, 189, 248, 0.9); font-size: 11px; background: rgba(15, 23, 42, 0.7); padding: 2px 6px; border-radius: 4px;", "Center Focus")
-  )
-)
-
-# Embed in Shiny UI:
-usbCameraUI("my_cam", width = "100%", height = "480px", overlay = my_html_overlay)
-'
-            )
+          h4("3. Secure Context Requirement (HTTPS / Localhost)"),
+          p(
+            "WebRTC APIs are disabled by modern browsers unless served from a Secure Context: ",
+            tags$code("https://"), " or local loopback (", tags$code("http://localhost"), " or ", tags$code("http://127.0.0.1"), "). ",
+            "Serving an unencrypted app over an internal LAN IP (e.g. ", tags$code("http://192.168.1.50:8000"), ") will cause the browser to block all camera enumeration."
+          ),
+          h4("4. Shiny Custom Message Handler Arity (handler.length === 1)"),
+          p(
+            "Shiny's JavaScript runtime strictly asserts that all custom message handlers take exactly one argument (",
+            tags$code("handler.length === 1"), "). Registering a zero-argument callback (", tags$code("() => { ... }"), ") ",
+            "causes Shiny to throw an uncaught exception (", tags$code("handler must be a function that takes one argument"), ") ",
+            "which halts subsequent script execution. USBCamera includes an internal patch and wraps all handlers with ",
+            tags$code("addSafeHandler"), " to guard against this pitfall."
+          ),
+          h4("5. Unplug Watchdogs & USB Bus Cooldowns"),
+          p(
+            "USB microscopy controllers (such as Cypress FX3 / Dino-Lite) can lock up if rapid stream open/close cycles occur. ",
+            "USBCamera enforces a 400ms bus cooldown before re-opening streams and monitors ", tags$code("devicechange"),
+            " and stream termination events so that temporary unplugs automatically reconnect when plugged back in."
           )
         ),
         tabPanel(
@@ -214,6 +219,7 @@ server <- function(input, output, session) {
   output$device_selector_ui <- renderUI({
     devs <- matching_devs()
     all_devs <- cam$devices()
+    cat("[DEBUG APP] renderUI device_selector_ui called: nrow(all_devs)=", nrow(all_devs), " nrow(devs)=", nrow(devs), "\n")
 
     if (nrow(all_devs) == 0) {
       return(p("Scanning for USB cameras...", style = "color: #64748b; font-style: italic;"))
@@ -229,7 +235,7 @@ server <- function(input, output, session) {
       ))
     }
 
-    choices <- stats::setNames(devs$deviceId, devs$label)
+    choices <- stats::setNames(devs$deviceId, tolower(devs$label))
     selectInput(
       "active_camera_id",
       label = "Matching USB Cameras:",
@@ -243,7 +249,7 @@ server <- function(input, output, session) {
     choice <- input$active_overlay_choice
     if (choice == "reticle") {
       cam$set_reticle(TRUE)
-      cam$set_overlay_html("")
+      cam$set_overlay_svg("")
     } else if (choice == "svg") {
       cam$set_reticle(FALSE)
       svg_html <- as.character(cameraOverlaySVG(
@@ -254,24 +260,10 @@ server <- function(input, output, session) {
         tags$rect(x = 340, y = 280, width = 600, height = 400, fill = "none", stroke = "#22c55e", stroke_width = "2"),
         tags$text(x = 345, y = 270, "Target Region [600 x 400 px]", fill = "#22c55e", font_size = "18px", font_family = "sans-serif")
       ))
-      cam$set_overlay_html(svg_html)
-    } else if (choice == "html") {
-      cam$set_reticle(FALSE)
-      hud_html <- as.character(cameraOverlayHTML(
-        div(
-          style = "position: absolute; top: 15px; right: 15px; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(4px); color: #f8fafc; padding: 6px 14px; border-radius: 8px; font-size: 12px; border: 1px solid rgba(255, 255, 255, 0.15);",
-          tags$span(style = "color: #22c55e; font-weight: bold;", "\u25cf LIVE"),
-          tags$span(style = "margin-left: 8px;", "Optics Ready")
-        ),
-        div(
-          style = "position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); border: 2px dashed rgba(56, 189, 248, 0.8); border-radius: 50%; width: 160px; height: 160px; display: flex; align-items: center; justify-content: center;",
-          span(style = "color: rgba(56, 189, 248, 0.9); font-size: 11px; background: rgba(15, 23, 42, 0.7); padding: 2px 6px; border-radius: 4px;", "Center Focus")
-        )
-      ))
-      cam$set_overlay_html(hud_html)
+      cam$set_overlay_svg(svg_html)
     } else {
       cam$set_reticle(FALSE)
-      cam$set_overlay_html("")
+      cam$set_overlay_svg("")
     }
   })
 
@@ -306,7 +298,7 @@ server <- function(input, output, session) {
 
     data.frame(
       Index = seq_len(nrow(devs)),
-      Camera_Label = devs$label,
+      Camera_Label = tolower(devs$label),
       Device_ID = paste0(substr(devs$deviceId, 1, 14), "..."),
       Matches_Regex = ifelse(matches, "YES (Matching)", "NO"),
       stringsAsFactors = FALSE
@@ -390,6 +382,4 @@ server <- function(input, output, session) {
   outputOptions(output, "demo_code_display", suspendWhenHidden = FALSE)
 }
 
-if (interactive()) {
-  shinyApp(ui, server)
-}
+shinyApp(ui, server)

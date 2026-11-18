@@ -36,3 +36,16 @@ Shiny UI tag list.
 Embeds a high-reliability WebRTC camera viewfinder with real-time CSS transformations,
 status badge, flash feedback, and overlay slots.
 }
+\details{
+\strong{Browser Security & Environment Requirements:}
+\itemize{
+  \item \strong{Secure Context Required:} WebRTC (navigator.mediaDevices.getUserMedia) is only
+    permitted in secure contexts: https:// or local loopback (http://localhost or http://127.0.0.1).
+  \item \strong{RStudio Viewer Pane Limitation:} On macOS and Linux, the embedded RStudio Viewer pane
+    lacks camera privacy entitlements. Calling camera APIs from inside the Viewer pane is
+    immediately rejected with NotAllowedError without displaying a prompt.
+  \item \strong{User Gesture for Permission Prompts:} Modern browsers suppress automatic permission prompts
+    initiated on page load without user interaction. Provide an explicit actionButton wired to
+    \code{cam$request_permission()} so users can trigger the prompt via a direct click gesture.
+}
+}
