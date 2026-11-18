@@ -32,6 +32,8 @@ A list of reactives and methods:
     \item{set_reticle(visible)}{Function toggling viewfinder reticle.}
     \item{set_zoom(is_zoomed)}{Function toggling 1:1 pixel center zoom.}
     \item{select_device(device_id)}{Function switching active camera device.}
+    \item{configure(filter, preferred_resolution)}{Function dynamically updating camera filter or resolution.}
+    \item{refresh_devices()}{Function triggering a hardware device rescan.}
   }
 }
 \description{

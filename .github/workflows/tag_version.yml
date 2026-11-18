@@ -9,98 +9,10 @@ permissions:
   contents: write
 
 jobs:
-  tag:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Auto-tag commit
-        shell: bash
-        run: |
-          set +e
-          set +o pipefail
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git fetch --tags --force
-
-          # 1. Skip if commit is already tagged
-          ALREADY_TAGGED=$(git tag --points-at HEAD)
-          if [ -n "$ALREADY_TAGGED" ]; then
-            echo "Commit already tagged as $ALREADY_TAGGED. Skipping."
-            exit 0
-          fi
-
-          BRANCH="${GITHUB_REF#refs/heads/}"
-          DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
-          if [ -z "$DEFAULT_BRANCH" ]; then
-            DEFAULT_BRANCH="main"
-          fi
-          echo "Current Branch: $BRANCH (Default: $DEFAULT_BRANCH)"
-
-          # 2. Find latest release tag (vX.Y.Z, no hyphens)
-          REACHABLE_BASE=$(git describe --tags --match="v[0-9]*.[0-9]*.[0-9]*" --exclude="*-*" --abbrev=0 2>/dev/null)
-          if [ -z "$REACHABLE_BASE" ]; then
-            REACHABLE_BASE=$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" | grep -v "-" | sort -V | tail -n 1)
-          fi
-
-          COMMIT_MSGS=$(git log -1 --pretty=%B)
-
-          # 3. Determine new semantic version tag
-          if [ -z "$REACHABLE_BASE" ]; then
-            # Brand new repo initial release seed
-            BASE_SEED="v0.1.0"
-            VER="${BASE_SEED#v}"
-            MAJOR=$(echo "$VER" | cut -d. -f1)
-            MINOR=$(echo "$VER" | cut -d. -f2)
-            PATCH=$(echo "$VER" | cut -d. -f3)
-
-            if echo "$COMMIT_MSGS" | grep -iqE "(#major|BREAKING CHANGE)"; then
-              NEW_TAG="v1.0.0"
-            elif echo "$COMMIT_MSGS" | grep -iqE "(#minor|^feat(\(.*\))?:)"; then
-              NEW_TAG="v0.2.0"
-            else
-              NEW_TAG="v0.1.0"
-            fi
-          elif [ "$BRANCH" = "$DEFAULT_BRANCH" ]; then
-            VER="${REACHABLE_BASE#v}"
-            MAJOR=$(echo "$VER" | cut -d. -f1)
-            MINOR=$(echo "$VER" | cut -d. -f2)
-            PATCH=$(echo "$VER" | cut -d. -f3)
-
-            RECENT_COMMITS=$(git log "${REACHABLE_BASE}..HEAD" --pretty=%B 2>/dev/null || echo "$COMMIT_MSGS")
-
-            if echo "$RECENT_COMMITS" | grep -iqE "(#major|BREAKING CHANGE)"; then
-              MAJOR=$((MAJOR + 1))
-              MINOR=0
-              PATCH=0
-            elif echo "$RECENT_COMMITS" | grep -iqE "(#minor|^feat(\(.*\))?:)"; then
-              MINOR=$((MINOR + 1))
-              PATCH=0
-            else
-              PATCH=$((PATCH + 1))
-            fi
-            NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
-          else
-            # Dev or feature branch: tag as vX.Y.Z-<branch>.<N>
-            CLEAN_BRANCH=$(echo "$BRANCH" | tr '/' '-' | tr ' ' '-')
-            LATEST_BRANCH_TAG=$(git tag -l "${REACHABLE_BASE}-${CLEAN_BRANCH}.*" | sort -V | tail -n 1)
-
-            if [ -z "$LATEST_BRANCH_TAG" ]; then
-              DEV_NUM=1
-            else
-              LAST_NUM=$(echo "$LATEST_BRANCH_TAG" | sed -E "s/.*\.([0-9]+)$/\1/")
-              if [[ "$LAST_NUM" =~ ^[0-9]+$ ]]; then
-                DEV_NUM=$((LAST_NUM + 1))
-              else
-                DEV_NUM=1
-              fi
-            fi
-            NEW_TAG="${REACHABLE_BASE}-${CLEAN_BRANCH}.${DEV_NUM}"
-          fi
-
-          echo "Tagging commit as: $NEW_TAG"
-          git tag -a "$NEW_TAG" -m "Automated tag $NEW_TAG [skip ci]"
-          git push origin "$NEW_TAG"
+  call-tagger:
+    uses: Salus-Discovery/.github/.github/workflows/universal_tag.yml@main
+    permissions:
+      contents: write
+    with:
+      initial_seed_version: 'v0.1.0'
+    secrets: inherit

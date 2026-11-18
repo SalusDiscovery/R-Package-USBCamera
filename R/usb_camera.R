@@ -69,7 +69,19 @@ usbCameraUI <- function(id, width = "100%", height = "480px", show_status = TRUE
       ),
       htmltools::div(id = ns("flash"), class = "usb-camera-flash-overlay"),
       tags$script(HTML(sprintf(
-        "$(document).on('shiny:connected', function() { window.initUSBCamera('%s', { filter: %s }); });",
+        "(function() {
+          function init() {
+            if (window.initUSBCamera) {
+              window.initUSBCamera('%s', { filter: %s });
+            }
+          }
+          if (window.Shiny && window.Shiny.shinyapp && window.Shiny.shinyapp.isConnected()) {
+            init();
+          } else {
+            $(document).one('shiny:connected', init);
+            setTimeout(init, 300);
+          }
+        })();",
         ns(NULL),
         jsonlite::toJSON(as.character(filter %||% ""), auto_unbox = TRUE)
       )))
@@ -122,6 +134,8 @@ usbCameraControlsUI <- function(id) {
 #'     \item{set_reticle(visible)}{Function toggling viewfinder reticle.}
 #'     \item{set_zoom(is_zoomed)}{Function toggling 1:1 pixel center zoom.}
 #'     \item{select_device(device_id)}{Function switching active camera device.}
+#'     \item{configure(filter, preferred_resolution)}{Function dynamically updating camera filter or resolution.}
+#'     \item{refresh_devices()}{Function triggering a hardware device rescan.}
 #'   }
 #' @export
 usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960), auto_connect = TRUE) {
@@ -131,12 +145,15 @@ usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960)
     devices_rv <- shiny::reactiveVal(data.frame(deviceId = character(0), label = character(0), stringsAsFactors = FALSE))
     snapshot_rv <- shiny::reactiveVal(NULL)
 
-    # Send initial configuration to client on connection
-    session$sendCustomMessage(session$ns("configure"), list(
-      filter = as.character(filter %||% ""),
-      preferredWidth = preferred_resolution[1],
-      preferredHeight = preferred_resolution[2]
-    ))
+    # Send initial configuration and trigger device scan
+    shiny::observe({
+      session$sendCustomMessage(session$ns("configure"), list(
+        filter = as.character(filter %||% ""),
+        preferredWidth = preferred_resolution[1],
+        preferredHeight = preferred_resolution[2]
+      ))
+      session$sendCustomMessage(session$ns("getDevices"), list())
+    })
 
     # Receive status updates from browser
     shiny::observeEvent(input$status, {
@@ -148,33 +165,24 @@ usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960)
     shiny::observeEvent(input$devices, {
       req(input$devices)
       df <- tryCatch({
-        as.data.frame(input$devices, stringsAsFactors = FALSE)
+        if (is.data.frame(input$devices)) {
+          input$devices
+        } else if (is.list(input$devices)) {
+          data.frame(
+            deviceId = vapply(input$devices, function(x) as.character(x$deviceId %||% ""), character(1)),
+            label = vapply(input$devices, function(x) as.character(x$label %||% ""), character(1)),
+            stringsAsFactors = FALSE
+          )
+        } else {
+          data.frame(deviceId = character(0), label = character(0), stringsAsFactors = FALSE)
+        }
       }, error = function(e) {
         data.frame(deviceId = character(0), label = character(0), stringsAsFactors = FALSE)
       })
       devices_rv(df)
     })
 
-    # Receive snapshot payload from browser
-    shiny::observeEvent(input$snapshot, {
-      req(input$snapshot)
-      payload <- input$snapshot
-      raw_bytes <- decode_base64_image(payload$dataUrl)
-
-      snap_obj <- list(
-        raw_bytes = raw_bytes,
-        data_url = payload$dataUrl,
-        width = payload$width %||% preferred_resolution[1],
-        height = payload$height %||% preferred_resolution[2],
-        time_str = payload$timeString %||% format(Sys.time(), "%H:%M:%S"),
-        timestamp = Sys.time(),
-        as_ebimage = function() as_ebimage(raw_bytes),
-        save = function(filepath) save_camera_image(raw_bytes, filepath)
-      )
-      snapshot_rv(snap_obj)
-    })
-
-    # Controls UI event handlers
+    # Wire up built-in toolbar buttons if usbCameraControlsUI is present
     shiny::observeEvent(input$btn_capture, {
       session$sendCustomMessage(session$ns("capture"), list(format = "jpeg", quality = 0.95))
     })
@@ -186,34 +194,94 @@ usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960)
       session$sendCustomMessage(session$ns("setOrientation"), list(rotation = rot, flipH = fh, flipV = fv))
     })
 
-    shiny::observe({
+    shiny::observeEvent(input$show_reticle, {
       session$sendCustomMessage(session$ns("setReticle"), list(visible = isTRUE(input$show_reticle)))
     })
 
-    shiny::observe({
+    shiny::observeEvent(input$zoom_center, {
       session$sendCustomMessage(session$ns("setZoom"), list(isZoomed = isTRUE(input$zoom_center)))
     })
 
-    # Public API object
+    # Process captured snapshots
+    shiny::observeEvent(input$snapshot, {
+      req(input$snapshot)
+      data_url <- input$snapshot$dataUrl
+      raw_bytes <- decode_base64_image(data_url)
+
+      snap_obj <- list(
+        raw_bytes = raw_bytes,
+        data_url = data_url,
+        width = input$snapshot$width,
+        height = input$snapshot$height,
+        time_str = input$snapshot$timeString %||% format(Sys.time(), "%H:%M:%S"),
+        timestamp = input$snapshot$timestamp %||% as.numeric(Sys.time()),
+        as_ebimage = function() {
+          as_ebimage(raw_bytes)
+        },
+        save = function(path) {
+          save_camera_image(raw_bytes, path)
+        }
+      )
+      snapshot_rv(snap_obj)
+    })
+
     list(
-      status = status_rv,
-      devices = devices_rv,
-      snapshot = snapshot_rv,
+      status = shiny::reactive(status_rv()),
+      devices = shiny::reactive(devices_rv()),
+      snapshot = shiny::reactive(snapshot_rv()),
       capture = function(format = "jpeg", quality = 0.95) {
         session$sendCustomMessage(session$ns("capture"), list(format = format, quality = quality))
       },
       set_orientation = function(rotation = 0, flip_h = FALSE, flip_v = FALSE) {
-        session$sendCustomMessage(session$ns("setOrientation"), list(rotation = rotation, flipH = flip_h, flipV = flip_v))
+        session$sendCustomMessage(session$ns("setOrientation"), list(
+          rotation = as.integer(rotation),
+          flipH = as.logical(flip_h),
+          flipV = as.logical(flip_v)
+        ))
       },
-      set_reticle = function(visible = TRUE) {
-        session$sendCustomMessage(session$ns("setReticle"), list(visible = visible))
+      set_reticle = function(visible = TRUE, circle_radius = 40) {
+        session$sendCustomMessage(session$ns("setReticle"), list(
+          visible = as.logical(visible),
+          circleRadius = as.integer(circle_radius)
+        ))
       },
       set_zoom = function(is_zoomed = TRUE) {
-        session$sendCustomMessage(session$ns("setZoom"), list(isZoomed = is_zoomed))
+        session$sendCustomMessage(session$ns("setZoom"), list(isZoomed = as.logical(is_zoomed)))
       },
       select_device = function(device_id) {
-        session$sendCustomMessage(session$ns("selectDevice"), list(deviceId = device_id))
+        session$sendCustomMessage(session$ns("selectDevice"), list(deviceId = as.character(device_id)))
+      },
+      configure = function(filter = NULL, preferred_resolution = NULL) {
+        msg <- list()
+        if (!is.null(filter)) msg$filter <- as.character(filter)
+        if (!is.null(preferred_resolution) && length(preferred_resolution) >= 2) {
+          msg$preferredWidth <- as.integer(preferred_resolution[1])
+          msg$preferredHeight <- as.integer(preferred_resolution[2])
+        }
+        session$sendCustomMessage(session$ns("configure"), msg)
+      },
+      refresh_devices = function() {
+        session$sendCustomMessage(session$ns("getDevices"), list())
       }
     )
   })
+}
+
+#' Package HTML and Script Dependency Loader
+#'
+#' @keywords internal
+#' @export
+usb_camera_dependency <- function() {
+  htmltools::htmlDependency(
+    name = "usb-camera",
+    version = "0.1.0",
+    src = c(file = system.file("www", package = "USBCamera")),
+    script = "usb_camera.js",
+    stylesheet = "usb_camera.css"
+  )
+}
+
+# Internal null coalescing operator
+`%||%` <- function(a, b) {
+  if (is.null(a) || length(a) == 0 || is.na(a)) b else a
 }

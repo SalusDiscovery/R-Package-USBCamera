@@ -22,6 +22,6 @@ Suggests:
     testthat (>= 3.0.0),
     knitr,
     rmarkdown
-URL: https://github.com/jaywarrick/R-Package-USBCamera
-BugReports: https://github.com/jaywarrick/R-Package-USBCamera/issues
+URL: https://github.com/SalusDiscovery/R-Package-USBCamera
+BugReports: https://github.com/SalusDiscovery/R-Package-USBCamera/issues
 Config/roxygen2/version: 8.1.1
