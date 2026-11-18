@@ -169,7 +169,7 @@ usbCameraControlsUI <- function(id) {
 #'     \item{refresh_diagnostics()}{Function querying updated permission state and raw devices.}
 #'   }
 #' @export
-usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960), auto_connect = TRUE) {
+usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960), auto_connect = TRUE, debug = FALSE) {
   shiny::moduleServer(id, function(input, output, session) {
 
     status_rv <- shiny::reactiveVal(list(working = FALSE, message = "Offline", activeDevice = ""))
@@ -202,7 +202,8 @@ usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960)
       session$sendCustomMessage(session$ns("configure"), list(
         filter = as.character(filter %||% ""),
         preferredWidth = preferred_resolution[1],
-        preferredHeight = preferred_resolution[2]
+        preferredHeight = preferred_resolution[2],
+        debug = isTRUE(debug)
       ))
       session$sendCustomMessage(session$ns("getDevices"), list())
       session$sendCustomMessage(session$ns("getStreamInfo"), list())
@@ -227,18 +228,18 @@ usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960)
       diagnostics_rv(input$diagnostics)
     })
 
-    # Mirror browser console logs to R console
+    # Forward browser logs to R console (warnings/errors always; info only if debug = TRUE)
     shiny::observeEvent(input$client_log, {
       req(input$client_log)
-      cat(sprintf("%s\n", input$client_log$message))
+      lvl <- tolower(input$client_log$level %||% "info")
+      if (isTRUE(debug) || lvl %in% c("warn", "error")) {
+        cat(sprintf("%s\n", input$client_log$message))
+      }
     })
 
     # Receive enumerated device list from browser
     shiny::observeEvent(input$devices, {
-      cat("[DEBUG R] input$devices triggered! raw class:", class(input$devices), "\n")
       df <- parse_camera_devices(input$devices)
-      cat("[DEBUG R] parsed dataframe nrow:", nrow(df), "\n")
-      print(df)
       devices_rv(df)
     }, ignoreNULL = FALSE)
 

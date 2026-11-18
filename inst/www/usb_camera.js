@@ -86,11 +86,13 @@
       else console.log(fullMsg);
 
       if (window.Shiny && typeof Shiny.setInputValue === 'function') {
-        Shiny.setInputValue(this.id + '-client_log', {
-          level: level,
-          message: fullMsg,
-          timestamp: Date.now()
-        }, { priority: 'event' });
+        if (level === 'error' || level === 'warn' || this.options.debug) {
+          Shiny.setInputValue(this.id + '-client_log', {
+            level: level,
+            message: fullMsg,
+            timestamp: Date.now()
+          }, { priority: 'event' });
+        }
       }
     }
 
@@ -484,7 +486,6 @@
 
       this.updateTransforms();
       this.reportStatus(true, activeLabel, activeLabel);
-      this.reportDevices();
       this.reportStreamInfo();
       await this.reportDiagnostics();
 
