@@ -67,19 +67,19 @@ usbCameraUI <- function(id, width = "100%", height = "480px", show_status = TRUE
       ),
       htmltools::div(id = ns("flash"), class = "usb-camera-flash-overlay"),
       tags$script(HTML(sprintf(
-        "(function() {
+        "$(function() {
+          var initialized = false;
           function init() {
+            if (initialized) return;
             if (window.initUSBCamera) {
+              initialized = true;
               window.initUSBCamera('%s', { filter: %s });
             }
           }
-          if (window.Shiny && window.Shiny.shinyapp && window.Shiny.shinyapp.isConnected()) {
-            init();
-          } else {
-            $(document).one('shiny:connected', init);
-            setTimeout(init, 300);
-          }
-        })();",
+          $(document).one('shiny:connected', init);
+          init();
+          setTimeout(init, 200);
+        });",
         ns(NULL),
         jsonlite::toJSON(as.character(filter %||% ""), auto_unbox = TRUE)
       )))
@@ -157,16 +157,9 @@ usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960)
     ))
     snapshot_rv <- shiny::reactiveVal(NULL)
 
-    # Send initial configuration and trigger device scan
-    shiny::observe({
-      session$sendCustomMessage(session$ns("configure"), list(
-        filter = as.character(filter %||% ""),
-        preferredWidth = preferred_resolution[1],
-        preferredHeight = preferred_resolution[2]
-      ))
-      session$sendCustomMessage(session$ns("getDevices"), list())
-      session$sendCustomMessage(session$ns("getStreamInfo"), list())
-    })
+    # Initial device scan request
+    session$sendCustomMessage(session$ns("getDevices"), list())
+    session$sendCustomMessage(session$ns("getStreamInfo"), list())
 
     # Receive status updates from browser
     shiny::observeEvent(input$status, {

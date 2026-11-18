@@ -360,28 +360,27 @@ server <- function(input, output, session) {
   })
 
   # Live demo code reader that stays updated with the file on disk
-  output$demo_code_display <- renderText({
-    app_path <- system.file("examples", "app.R", package = "USBCamera")
-    if (!nzchar(app_path) || !file.exists(app_path)) {
-      candidates <- c(
-        "inst/examples/app.R",
-        "app.R",
-        file.path("..", "inst", "examples", "app.R"),
-        "/Users/jaywarrick/Documents/GitHub/R-Package-USBCamera/inst/examples/app.R"
-      )
-      for (cand in candidates) {
-        if (file.exists(cand)) {
-          app_path <- cand
-          break
-        }
+  demo_code_text <- reactive({
+    candidates <- c(
+      system.file("examples", "app.R", package = "USBCamera"),
+      system.file("examples/app.R", package = "USBCamera"),
+      "inst/examples/app.R",
+      "app.R",
+      file.path("..", "inst", "examples", "app.R"),
+      "/Users/jaywarrick/Documents/GitHub/R-Package-USBCamera/inst/examples/app.R"
+    )
+    for (cand in candidates) {
+      if (nzchar(cand) && file.exists(cand)) {
+        return(paste(readLines(cand, warn = FALSE), collapse = "\n"))
       }
     }
-    if (file.exists(app_path)) {
-      paste(readLines(app_path, warn = FALSE), collapse = "\n")
-    } else {
-      "# Demo app source code could not be located on disk."
-    }
+    "# Demo app source code could not be located on disk."
   })
+
+  output$demo_code_display <- renderPrint({
+    cat(demo_code_text())
+  })
+  outputOptions(output, "demo_code_display", suspendWhenHidden = FALSE)
 }
 
 if (interactive()) {

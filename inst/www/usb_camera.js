@@ -29,6 +29,7 @@
       this.isZoomed = false;
       this.reconnectTimer = null;
       this.streamInfo = null;
+      this.isStartingWorkflow = false;
 
       this.initDOMElements();
       this.bindShinyHandlers();
@@ -91,10 +92,10 @@
         let attempts = 0;
         const interval = setInterval(() => {
           attempts++;
-          if (send() || attempts >= 25) {
+          if (send() || attempts >= 20) {
             clearInterval(interval);
           }
-        }, 200);
+        }, 250);
       }
     }
 
@@ -116,10 +117,10 @@
         let attempts = 0;
         const interval = setInterval(() => {
           attempts++;
-          if (send() || attempts >= 25) {
+          if (send() || attempts >= 20) {
             clearInterval(interval);
           }
-        }, 200);
+        }, 250);
       }
     }
 
@@ -159,10 +160,10 @@
         let attempts = 0;
         const interval = setInterval(() => {
           attempts++;
-          if (send() || attempts >= 25) {
+          if (send() || attempts >= 20) {
             clearInterval(interval);
           }
-        }, 200);
+        }, 250);
       }
     }
 
@@ -174,7 +175,7 @@
       let devices = await navigator.mediaDevices.enumerateDevices();
       let videoDevices = devices.filter(d => d.kind === 'videoinput');
 
-      // If device labels are blank/masked, prompt user once via getUserMedia
+      // If device labels are blank/masked, request permission once via getUserMedia
       const hasLabels = videoDevices.some(d => d.label && d.label.length > 0);
       if (!hasLabels || videoDevices.length === 0) {
         this.log('info', 'Requesting camera access to enumerate device labels...');
@@ -262,16 +263,22 @@
         } else {
           this.log('warn', `No camera matched filter regex: "${filterVal}". Attached: ${devices.map(d => d.label).join(', ')}`);
           this.showNoMatchOverlay(filterVal, devices);
-          return null; // Return null - no fallback!
+          return null;
         }
       }
 
-      // 3. Only if filter is NULL or '' (empty string), default to first available camera
+      // 3. Only if filter is empty (""), default to first available camera
       this.hideNoMatchOverlay();
       return devices[0];
     }
 
     async startDeviceWorkflow() {
+      if (this.isStartingWorkflow) {
+        this.log('info', 'Device workflow already in progress, skipping concurrent trigger.');
+        return;
+      }
+      this.isStartingWorkflow = true;
+
       try {
         const videoDevices = await this.probePermissions();
         if (videoDevices.length === 0) {
@@ -291,6 +298,8 @@
         await this.startStream(targetDevice.deviceId, targetDevice.label);
       } catch (e) {
         this.reportStatus(false, `Initialization error: ${e.message}`);
+      } finally {
+        this.isStartingWorkflow = false;
       }
     }
 
@@ -502,7 +511,6 @@
     }
 
     bindShinyHandlers() {
-      // Periodic device and stream info reporting when Shiny is active
       $(document).on('shiny:connected shiny:sessioninitialized', () => {
         this.reportDevices();
         if (this.isWorking) {
