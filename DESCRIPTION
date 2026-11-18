@@ -1,0 +1,27 @@
+Package: USBCamera
+Type: Package
+Title: Robust USB Camera Viewfinder, Control, and Pixel Analysis for Shiny
+Version: 0.1.0
+Author: Jay Warrick [aut, cre]
+Maintainer: Jay Warrick <jay.warrick@gmail.com>
+Description: High-reliability WebRTC-powered USB camera streaming, orientation calibration, 
+    viewfinder reticles, pixel-accurate overlays, and frame capture for Shiny applications. 
+    Includes automatic device enumeration, 400ms bus cooldowns for USB controllers (Cypress FX3, 
+    Dino-Lite, UVC), stream recovery, and direct conversion to EBImage arrays for downstream 
+    computer vision and quantitative image processing.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Imports:
+    shiny (>= 1.7.0),
+    htmltools (>= 0.5.0),
+    jsonlite (>= 1.8.0),
+    base64enc (>= 0.1-3)
+Suggests:
+    EBImage,
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown
+URL: https://github.com/jaywarrick/R-Package-USBCamera
+BugReports: https://github.com/jaywarrick/R-Package-USBCamera/issues
+Config/roxygen2/version: 8.1.1
