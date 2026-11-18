@@ -294,9 +294,10 @@ usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960)
 #' @keywords internal
 #' @export
 usb_camera_dependency <- function() {
+  ver <- as.character(tryCatch(utils::packageVersion("USBCamera"), error = function(e) "0.2.1"))
   htmltools::htmlDependency(
     name = "usb-camera",
-    version = "0.1.0",
+    version = ver,
     src = c(file = system.file("www", package = "USBCamera")),
     script = "usb_camera.js",
     stylesheet = "usb_camera.css"

@@ -1,7 +1,7 @@
 Package: USBCamera
 Type: Package
 Title: Robust USB Camera Viewfinder, Control, and Pixel Analysis for Shiny
-Version: 0.1.0
+Version: 0.2.1
 Author: Jay Warrick [aut, cre]
 Maintainer: Jay Warrick <jay.warrick@gmail.com>
 Description: High-reliability WebRTC-powered USB camera streaming, orientation calibration, 

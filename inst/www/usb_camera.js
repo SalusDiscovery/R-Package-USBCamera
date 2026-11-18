@@ -167,9 +167,11 @@
       }
     }
 
-    async probePermissions() {
+    async probePermissions(forceProbe) {
       if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
-        throw new Error('navigator.mediaDevices.enumerateDevices is not supported.');
+        this.log('error', 'navigator.mediaDevices.enumerateDevices is not supported.');
+        this.reportStatus(false, 'MediaDevices API not supported in this browser context.');
+        return [];
       }
 
       let devices = await navigator.mediaDevices.enumerateDevices();
@@ -177,17 +179,28 @@
 
       // If device labels are blank/masked, request permission once via getUserMedia
       const hasLabels = videoDevices.some(d => d.label && d.label.length > 0);
-      if (!hasLabels || videoDevices.length === 0) {
-        this.log('info', 'Requesting camera access to enumerate device labels...');
+      if (!hasLabels || videoDevices.length === 0 || forceProbe) {
+        this.log('info', 'Camera permission not yet granted or labels masked. Requesting getUserMedia probe...');
+        let probeStream = null;
         try {
-          const probe = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-          probe.getTracks().forEach(t => t.stop());
-          await new Promise(r => setTimeout(r, this.options.cooldownMs));
+          probeStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          // CRITICAL: Call enumerateDevices WHILE probeStream is actively running so browser unmasks labels!
           devices = await navigator.mediaDevices.enumerateDevices();
           videoDevices = devices.filter(d => d.kind === 'videoinput');
+          this.log('info', `Device probe successful. Discovered ${videoDevices.length} video inputs.`);
         } catch (e) {
-          this.log('warn', `Camera permission prompt rejected or failed: ${e.message}`);
+          this.log('warn', `Camera permission probe error: ${e.name} - ${e.message}`);
+          this.reportStatus(false, `Camera permission needed: ${e.message}`);
+        } finally {
+          if (probeStream) {
+            try {
+              probeStream.getTracks().forEach(t => t.stop());
+            } catch (err) {}
+            await new Promise(r => setTimeout(r, this.options.cooldownMs));
+          }
         }
+      } else {
+        this.log('info', `Using cached camera list (${videoDevices.length} devices with labels).`);
       }
 
       this.devices = videoDevices;
@@ -539,7 +552,8 @@
       });
 
       Shiny.addCustomMessageHandler(this.id + '-getDevices', () => {
-        this.probePermissions().then(() => this.reportDevices());
+        this.log('info', 'Received getDevices request from Shiny.');
+        this.probePermissions(true).then(() => this.reportDevices());
       });
 
       Shiny.addCustomMessageHandler(this.id + '-getStreamInfo', () => {

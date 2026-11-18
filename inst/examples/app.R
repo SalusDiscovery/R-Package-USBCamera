@@ -2,6 +2,13 @@
 # Demonstrates dynamic regex filtering, device listing, live streaming,
 # real-time hardware stream querying, SVG/HTML overlays, and EBImage analysis.
 
+if (!requireNamespace("USBCamera", quietly = TRUE)) {
+  if (requireNamespace("pkgload", quietly = TRUE)) {
+    pkgload::load_all()
+  } else if (requireNamespace("devtools", quietly = TRUE)) {
+    devtools::load_all()
+  }
+}
 library(shiny)
 library(USBCamera)
 
