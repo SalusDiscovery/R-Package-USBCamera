@@ -44,6 +44,9 @@
       this.statusText = document.getElementById(this.id + '-status-text');
       this.reticleEl = document.getElementById(this.id + '-reticle');
       this.flashEl = document.getElementById(this.id + '-flash');
+      this.noMatchOverlay = document.getElementById(this.id + '-no-match-overlay');
+      this.noMatchFilterEl = document.getElementById(this.id + '-no-match-filter');
+      this.noMatchDevicesList = document.getElementById(this.id + '-no-match-devices-list');
 
       if (this.videoEl) {
         this.videoEl.muted = true;
@@ -124,28 +127,67 @@
       }
     }
 
+    showNoMatchOverlay(filterStr, devices) {
+      if (this.noMatchOverlay) {
+        if (this.noMatchFilterEl) {
+          this.noMatchFilterEl.textContent = filterStr || '(none)';
+        }
+        if (this.noMatchDevicesList) {
+          this.noMatchDevicesList.innerHTML = '';
+          if (devices && devices.length > 0) {
+            devices.forEach((d, idx) => {
+              const li = document.createElement('li');
+              li.textContent = `${idx + 1}. "${d.label || 'Camera without label'}" (ID: ${d.deviceId ? d.deviceId.substring(0, 8) : 'unknown'}...)`;
+              this.noMatchDevicesList.appendChild(li);
+            });
+          } else {
+            const li = document.createElement('li');
+            li.textContent = 'No video input devices detected on this system.';
+            this.noMatchDevicesList.appendChild(li);
+          }
+        }
+        this.noMatchOverlay.style.display = 'flex';
+      }
+    }
+
+    hideNoMatchOverlay() {
+      if (this.noMatchOverlay) {
+        this.noMatchOverlay.style.display = 'none';
+      }
+    }
+
     selectMatchingDevice(devices) {
-      if (!devices || devices.length === 0) return null;
+      if (!devices || devices.length === 0) {
+        this.showNoMatchOverlay(this.options.filter, []);
+        return null;
+      }
 
       // 1. If explicit selectedDeviceId was provided
       if (this.selectedDeviceId) {
         const found = devices.find(d => d.deviceId === this.selectedDeviceId);
-        if (found) return found;
+        if (found) {
+          this.hideNoMatchOverlay();
+          return found;
+        }
       }
 
-      // 2. Match against filter string/regex
-      if (this.options.filter) {
-        const match = devices.find(d => this.matchesFilter(d.label || '', this.options.filter));
-        if (match) return match;
+      const filterVal = (typeof this.options.filter === 'string') ? this.options.filter.trim() : '';
+
+      // 2. If regex/filter was provided, ONLY select if a device matches (no default fallback)
+      if (filterVal.length > 0) {
+        const match = devices.find(d => this.matchesFilter(d.label || '', filterVal));
+        if (match) {
+          this.hideNoMatchOverlay();
+          return match;
+        } else {
+          this.log('warn', `No camera matched filter regex: "${filterVal}". Attached: ${devices.map(d => d.label).join(', ')}`);
+          this.showNoMatchOverlay(filterVal, devices);
+          return null;
+        }
       }
 
-      // 3. Fallback: If only 1 video camera exists on system, auto-select it
-      if (devices.length === 1) {
-        this.log('info', `Single video camera detected ("${devices[0].label || 'Camera 1'}"). Auto-selecting.`);
-        return devices[0];
-      }
-
-      // 4. Default to first device
+      // 3. Only if filter is NULL or '' (empty), default to first available camera
+      this.hideNoMatchOverlay();
       return devices[0];
     }
 
@@ -159,7 +201,9 @@
 
         const targetDevice = this.selectMatchingDevice(videoDevices);
         if (!targetDevice) {
-          this.reportStatus(false, 'No camera matched filter: ' + this.options.filter);
+          this.stopStream();
+          const devLabels = videoDevices.map(d => d.label || 'Unlabeled Camera').join(', ');
+          this.reportStatus(false, `No camera matched filter: "${this.options.filter}". Available: [${devLabels}]`);
           return;
         }
 
@@ -230,6 +274,7 @@
 
       this.currentStream = stream;
       this.selectedDeviceId = deviceId;
+      this.hideNoMatchOverlay();
 
       const track = stream.getVideoTracks()[0];
       const activeLabel = track ? track.label : deviceLabel;
@@ -390,10 +435,20 @@
         this.setZoom(Boolean(msg && msg.isZoomed));
       });
 
+      Shiny.addCustomMessageHandler(this.id + '-configure', (msg) => {
+        if (!msg) return;
+        if (msg.filter !== undefined) this.options.filter = msg.filter;
+        if (msg.preferredWidth !== undefined) this.options.preferredWidth = msg.preferredWidth;
+        if (msg.preferredHeight !== undefined) this.options.preferredHeight = msg.preferredHeight;
+        this.startDeviceWorkflow();
+      });
+
       Shiny.addCustomMessageHandler(this.id + '-selectDevice', (msg) => {
         if (msg && msg.deviceId) {
           const device = this.devices.find(d => d.deviceId === msg.deviceId);
           const label = device ? device.label : 'Selected Camera';
+          this.selectedDeviceId = msg.deviceId;
+          this.hideNoMatchOverlay();
           this.startStream(msg.deviceId, label);
         }
       });

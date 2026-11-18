@@ -138,3 +138,88 @@
   border: 1px solid #e2e8f0;
   margin-top: 8px;
 }
+
+.usb-camera-no-match-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(15, 23, 42, 0.92);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 25;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+.usb-camera-no-match-card {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 18px 22px;
+  max-width: 90%;
+  color: #f8fafc;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+  text-align: left;
+}
+
+.usb-camera-no-match-icon {
+  font-size: 24px;
+  margin-bottom: 6px;
+}
+
+.usb-camera-no-match-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #f59e0b;
+  margin-bottom: 8px;
+}
+
+.usb-camera-no-match-regex {
+  font-size: 12px;
+  color: #cbd5e1;
+  margin-bottom: 12px;
+}
+
+.usb-camera-no-match-regex code {
+  background: #0f172a;
+  color: #38bdf8;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: monospace;
+}
+
+.usb-camera-no-match-devices-header {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.usb-camera-no-match-list {
+  margin: 0 0 12px 0;
+  padding-left: 20px;
+  font-size: 12px;
+  color: #e2e8f0;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.usb-camera-no-match-list li {
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+
+.usb-camera-no-match-hint {
+  font-size: 11px;
+  color: #94a3b8;
+  font-style: italic;
+  border-top: 1px solid #334155;
+  padding-top: 8px;
+}

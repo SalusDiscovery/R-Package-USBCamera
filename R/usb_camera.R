@@ -9,9 +9,10 @@
 #' @param show_status Whether to display the live connection status badge in the corner.
 #' @param reticle Whether to initialize with the built-in crosshair overlay visible.
 #' @param overlay Optional custom HTML/SVG overlay tag object placed over the live video.
+#' @param filter Optional regex or string filter to auto-select a specific camera by label.
 #' @return Shiny UI tag list.
 #' @export
-usbCameraUI <- function(id, width = "100%", height = "480px", show_status = TRUE, reticle = FALSE, overlay = NULL) {
+usbCameraUI <- function(id, width = "100%", height = "480px", show_status = TRUE, reticle = FALSE, overlay = NULL, filter = "") {
   ns <- shiny::NS(id)
 
   htmltools::tagList(
@@ -48,10 +49,29 @@ usbCameraUI <- function(id, width = "100%", height = "480px", show_status = TRUE
           overlay
         )
       },
+      htmltools::div(
+        id = ns("no-match-overlay"),
+        class = "usb-camera-no-match-overlay",
+        style = "display: none;",
+        htmltools::div(
+          class = "usb-camera-no-match-card",
+          htmltools::div(class = "usb-camera-no-match-icon", "\u26a0"),
+          htmltools::div(class = "usb-camera-no-match-title", "No Matching Camera Found"),
+          htmltools::div(
+            class = "usb-camera-no-match-regex",
+            "Filter Pattern: ",
+            htmltools::tags$code(id = ns("no-match-filter"), "")
+          ),
+          htmltools::div(class = "usb-camera-no-match-devices-header", "Attached Cameras Detected:"),
+          htmltools::tags$ul(id = ns("no-match-devices-list"), class = "usb-camera-no-match-list"),
+          htmltools::div(class = "usb-camera-no-match-hint", "Adjust your filter regex or select an attached camera from the dropdown.")
+        )
+      ),
       htmltools::div(id = ns("flash"), class = "usb-camera-flash-overlay"),
       tags$script(HTML(sprintf(
-        "$(document).on('shiny:connected', function() { window.initUSBCamera('%s', {}); });",
-        ns(NULL)
+        "$(document).on('shiny:connected', function() { window.initUSBCamera('%s', { filter: %s }); });",
+        ns(NULL),
+        jsonlite::toJSON(as.character(filter %||% ""), auto_unbox = TRUE)
       )))
     )
   )
@@ -110,6 +130,13 @@ usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960)
     status_rv <- shiny::reactiveVal(list(working = FALSE, message = "Offline", activeDevice = ""))
     devices_rv <- shiny::reactiveVal(data.frame(deviceId = character(0), label = character(0), stringsAsFactors = FALSE))
     snapshot_rv <- shiny::reactiveVal(NULL)
+
+    # Send initial configuration to client on connection
+    session$sendCustomMessage(session$ns("configure"), list(
+      filter = as.character(filter %||% ""),
+      preferredWidth = preferred_resolution[1],
+      preferredHeight = preferred_resolution[2]
+    ))
 
     # Receive status updates from browser
     shiny::observeEvent(input$status, {

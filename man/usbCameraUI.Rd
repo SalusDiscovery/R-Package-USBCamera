@@ -10,7 +10,8 @@ usbCameraUI(
   height = "480px",
   show_status = TRUE,
   reticle = FALSE,
-  overlay = NULL
+  overlay = NULL,
+  filter = ""
 )
 }
 \arguments{
@@ -25,6 +26,8 @@ usbCameraUI(
 \item{reticle}{Whether to initialize with the built-in crosshair overlay visible.}
 
 \item{overlay}{Optional custom HTML/SVG overlay tag object placed over the live video.}
+
+\item{filter}{Optional regex or string filter to auto-select a specific camera by label.}
 }
 \value{
 Shiny UI tag list.
