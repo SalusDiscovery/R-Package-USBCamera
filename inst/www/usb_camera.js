@@ -28,6 +28,7 @@
       this.flipV = false;
       this.isZoomed = false;
       this.reconnectTimer = null;
+      this.streamInfo = null;
 
       this.initDOMElements();
       this.bindShinyHandlers();
@@ -43,6 +44,7 @@
       this.statusDot = document.getElementById(this.id + '-status-dot');
       this.statusText = document.getElementById(this.id + '-status-text');
       this.reticleEl = document.getElementById(this.id + '-reticle');
+      this.customOverlayEl = document.getElementById(this.id + '-custom-overlay');
       this.flashEl = document.getElementById(this.id + '-flash');
       this.noMatchOverlay = document.getElementById(this.id + '-no-match-overlay');
       this.noMatchFilterEl = document.getElementById(this.id + '-no-match-filter');
@@ -105,6 +107,49 @@
       const send = () => {
         if (window.Shiny && typeof Shiny.setInputValue === 'function') {
           Shiny.setInputValue(this.id + '-devices', payload, { priority: 'event' });
+          return true;
+        }
+        return false;
+      };
+
+      if (!send()) {
+        let attempts = 0;
+        const interval = setInterval(() => {
+          attempts++;
+          if (send() || attempts >= 25) {
+            clearInterval(interval);
+          }
+        }, 200);
+      }
+    }
+
+    reportStreamInfo() {
+      if (!this.currentStream) return;
+      const track = this.currentStream.getVideoTracks()[0];
+      const settings = (track && track.getSettings) ? track.getSettings() : {};
+      const vw = (this.videoEl && this.videoEl.videoWidth) ? this.videoEl.videoWidth : (settings.width || this.options.preferredWidth || 1280);
+      const vh = (this.videoEl && this.videoEl.videoHeight) ? this.videoEl.videoHeight : (settings.height || this.options.preferredHeight || 960);
+      const fps = settings.frameRate || 0;
+      const ar = (vw && vh) ? (vw / vh) : (settings.aspectRatio || 1.3333);
+
+      const info = {
+        width: vw,
+        height: vh,
+        frameRate: Math.round(fps * 10) / 10,
+        aspectRatio: Math.round(ar * 1000) / 1000,
+        channels: 3,
+        bitDepth: 8,
+        colorMode: 'Color (RGB)',
+        deviceId: this.selectedDeviceId || '',
+        label: track ? track.label : 'Active Camera',
+        timestamp: Date.now()
+      };
+
+      this.streamInfo = info;
+
+      const send = () => {
+        if (window.Shiny && typeof Shiny.setInputValue === 'function') {
+          Shiny.setInputValue(this.id + '-stream_info', info, { priority: 'event' });
           return true;
         }
         return false;
@@ -317,6 +362,9 @@
 
       if (this.videoEl) {
         this.videoEl.srcObject = stream;
+        this.videoEl.onloadedmetadata = () => {
+          this.reportStreamInfo();
+        };
         try {
           await this.videoEl.play();
         } catch (e) {
@@ -327,6 +375,7 @@
       this.updateTransforms();
       this.reportStatus(true, activeLabel, activeLabel);
       this.reportDevices();
+      this.reportStreamInfo();
 
       // Listen for unexpected track termination (e.g. cable unplugged)
       track.onended = () => {
@@ -453,11 +502,12 @@
     }
 
     bindShinyHandlers() {
-      // Periodic device reporting when Shiny is active
+      // Periodic device and stream info reporting when Shiny is active
       $(document).on('shiny:connected shiny:sessioninitialized', () => {
         this.reportDevices();
-        if (this.isWorking && this.selectedDeviceId) {
+        if (this.isWorking) {
           this.reportStatus(true, this.videoEl ? this.videoEl.title || 'Connected' : 'Connected', this.selectedDeviceId);
+          this.reportStreamInfo();
         }
       });
 
@@ -482,6 +532,16 @@
 
       Shiny.addCustomMessageHandler(this.id + '-getDevices', () => {
         this.probePermissions().then(() => this.reportDevices());
+      });
+
+      Shiny.addCustomMessageHandler(this.id + '-getStreamInfo', () => {
+        this.reportStreamInfo();
+      });
+
+      Shiny.addCustomMessageHandler(this.id + '-setOverlayHTML', (msg) => {
+        if (this.customOverlayEl) {
+          this.customOverlayEl.innerHTML = (msg && msg.html) ? msg.html : '';
+        }
       });
 
       Shiny.addCustomMessageHandler(this.id + '-configure', (msg) => {
@@ -513,6 +573,7 @@
         existing.options.filter = options.filter;
       }
       existing.reportDevices();
+      existing.reportStreamInfo();
       return existing;
     }
     const inst = new USBCameraInstance(id, options);

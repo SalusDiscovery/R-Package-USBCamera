@@ -42,13 +42,11 @@ usbCameraUI <- function(id, width = "100%", height = "480px", show_status = TRUE
         style = if (!reticle) "display: none;" else NULL,
         cameraOverlayCrosshair()
       ),
-      if (!is.null(overlay)) {
-        htmltools::div(
-          id = ns("custom-overlay"),
-          class = "usb-camera-overlay-layer",
-          overlay
-        )
-      },
+      htmltools::div(
+        id = ns("custom-overlay"),
+        class = "usb-camera-overlay-layer",
+        if (!is.null(overlay)) overlay else NULL
+      ),
       htmltools::div(
         id = ns("no-match-overlay"),
         class = "usb-camera-no-match-overlay",
@@ -117,7 +115,7 @@ usbCameraControlsUI <- function(id) {
 #' USB Camera Server Module
 #'
 #' Manages camera connection state, device listing, orientation calibration,
-#' frame capture, and conversion to EBImage objects.
+#' frame capture, stream properties, and conversion to EBImage objects.
 #'
 #' @param id Shiny module namespace ID.
 #' @param filter Regex or string pattern used to auto-select a specific camera by label
@@ -128,14 +126,17 @@ usbCameraControlsUI <- function(id) {
 #'   \describe{
 #'     \item{status}{Reactive list with fields: \code{working} (logical), \code{message} (character), \code{activeDevice} (character).}
 #'     \item{devices}{Reactive data frame of discovered cameras (\code{deviceId}, \code{label}).}
-#'     \item{snapshot}{Reactive list representing the latest captured frame, containing \code{raw_bytes}, \code{data_url}, \code{width}, \code{height}, \code{time_str}, and helper methods \code{as_ebimage()} and \code{save(path)}.}
+#'     \item{stream_info}{Reactive list of hardware stream properties: \code{width}, \code{height}, \code{frameRate}, \code{aspectRatio}, \code{channels}, \code{bitDepth}, \code{colorMode}, \code{label}.}
+#'     \item{snapshot}{Reactive list representing the latest captured frame, containing \code{raw_bytes}, \code{data_url}, \code{width}, \code{height}, \code{channels}, \code{bit_depth}, \code{color_mode}, \code{time_str}, and helper methods \code{as_ebimage()} and \code{save(path)}.}
 #'     \item{capture(format = "jpeg", quality = 0.95)}{Function triggering an immediate capture.}
 #'     \item{set_orientation(rotation, flip_h, flip_v)}{Function updating orientation calibration.}
 #'     \item{set_reticle(visible)}{Function toggling viewfinder reticle.}
 #'     \item{set_zoom(is_zoomed)}{Function toggling 1:1 pixel center zoom.}
+#'     \item{set_overlay_html(html)}{Function dynamically replacing or setting custom overlay HTML/SVG.}
 #'     \item{select_device(device_id)}{Function switching active camera device.}
 #'     \item{configure(filter, preferred_resolution)}{Function dynamically updating camera filter or resolution.}
 #'     \item{refresh_devices()}{Function triggering a hardware device rescan.}
+#'     \item{refresh_stream_info()}{Function requesting updated live stream metadata from the browser.}
 #'   }
 #' @export
 usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960), auto_connect = TRUE) {
@@ -143,6 +144,17 @@ usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960)
 
     status_rv <- shiny::reactiveVal(list(working = FALSE, message = "Offline", activeDevice = ""))
     devices_rv <- shiny::reactiveVal(data.frame(deviceId = character(0), label = character(0), stringsAsFactors = FALSE))
+    stream_info_rv <- shiny::reactiveVal(list(
+      width = 0,
+      height = 0,
+      frameRate = 0,
+      aspectRatio = 1.333,
+      channels = 3,
+      bitDepth = 8,
+      colorMode = "Color (RGB)",
+      label = "",
+      deviceId = ""
+    ))
     snapshot_rv <- shiny::reactiveVal(NULL)
 
     # Send initial configuration and trigger device scan
@@ -153,12 +165,19 @@ usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960)
         preferredHeight = preferred_resolution[2]
       ))
       session$sendCustomMessage(session$ns("getDevices"), list())
+      session$sendCustomMessage(session$ns("getStreamInfo"), list())
     })
 
     # Receive status updates from browser
     shiny::observeEvent(input$status, {
       req(input$status)
       status_rv(input$status)
+    })
+
+    # Receive hardware stream info from browser
+    shiny::observeEvent(input$stream_info, {
+      req(input$stream_info)
+      stream_info_rv(input$stream_info)
     })
 
     # Receive enumerated device list from browser
@@ -213,6 +232,9 @@ usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960)
         data_url = data_url,
         width = input$snapshot$width,
         height = input$snapshot$height,
+        channels = 3,
+        bit_depth = 8,
+        color_mode = "Color (RGB)",
         time_str = input$snapshot$timeString %||% format(Sys.time(), "%H:%M:%S"),
         timestamp = input$snapshot$timestamp %||% as.numeric(Sys.time()),
         as_ebimage = function() {
@@ -228,6 +250,7 @@ usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960)
     list(
       status = shiny::reactive(status_rv()),
       devices = shiny::reactive(devices_rv()),
+      stream_info = shiny::reactive(stream_info_rv()),
       snapshot = shiny::reactive(snapshot_rv()),
       capture = function(format = "jpeg", quality = 0.95) {
         session$sendCustomMessage(session$ns("capture"), list(format = format, quality = quality))
@@ -248,6 +271,9 @@ usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960)
       set_zoom = function(is_zoomed = TRUE) {
         session$sendCustomMessage(session$ns("setZoom"), list(isZoomed = as.logical(is_zoomed)))
       },
+      set_overlay_html = function(html) {
+        session$sendCustomMessage(session$ns("setOverlayHTML"), list(html = as.character(html %||% "")))
+      },
       select_device = function(device_id) {
         session$sendCustomMessage(session$ns("selectDevice"), list(deviceId = as.character(device_id)))
       },
@@ -262,6 +288,9 @@ usbCameraServer <- function(id, filter = "", preferred_resolution = c(1280, 960)
       },
       refresh_devices = function() {
         session$sendCustomMessage(session$ns("getDevices"), list())
+      },
+      refresh_stream_info = function() {
+        session$sendCustomMessage(session$ns("getStreamInfo"), list())
       }
     )
   })

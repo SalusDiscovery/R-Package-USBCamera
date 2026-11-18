@@ -2,6 +2,8 @@
 
 export(as_ebimage)
 export(cameraOverlayCrosshair)
+export(cameraOverlayHTML)
+export(cameraOverlaySVG)
 export(decode_base64_image)
 export(save_camera_image)
 export(usbCameraControlsUI)

@@ -26,17 +26,20 @@ A list of reactives and methods:
   \describe{
     \item{status}{Reactive list with fields: \code{working} (logical), \code{message} (character), \code{activeDevice} (character).}
     \item{devices}{Reactive data frame of discovered cameras (\code{deviceId}, \code{label}).}
-    \item{snapshot}{Reactive list representing the latest captured frame, containing \code{raw_bytes}, \code{data_url}, \code{width}, \code{height}, \code{time_str}, and helper methods \code{as_ebimage()} and \code{save(path)}.}
+    \item{stream_info}{Reactive list of hardware stream properties: \code{width}, \code{height}, \code{frameRate}, \code{aspectRatio}, \code{channels}, \code{bitDepth}, \code{colorMode}, \code{label}.}
+    \item{snapshot}{Reactive list representing the latest captured frame, containing \code{raw_bytes}, \code{data_url}, \code{width}, \code{height}, \code{channels}, \code{bit_depth}, \code{color_mode}, \code{time_str}, and helper methods \code{as_ebimage()} and \code{save(path)}.}
     \item{capture(format = "jpeg", quality = 0.95)}{Function triggering an immediate capture.}
     \item{set_orientation(rotation, flip_h, flip_v)}{Function updating orientation calibration.}
     \item{set_reticle(visible)}{Function toggling viewfinder reticle.}
     \item{set_zoom(is_zoomed)}{Function toggling 1:1 pixel center zoom.}
+    \item{set_overlay_html(html)}{Function dynamically replacing or setting custom overlay HTML/SVG.}
     \item{select_device(device_id)}{Function switching active camera device.}
     \item{configure(filter, preferred_resolution)}{Function dynamically updating camera filter or resolution.}
     \item{refresh_devices()}{Function triggering a hardware device rescan.}
+    \item{refresh_stream_info()}{Function requesting updated live stream metadata from the browser.}
   }
 }
 \description{
 Manages camera connection state, device listing, orientation calibration,
-frame capture, and conversion to EBImage objects.
+frame capture, stream properties, and conversion to EBImage objects.
 }
