@@ -12,6 +12,7 @@ if (!requireNamespace("USBCamera", quietly = TRUE)) {
 library(shiny)
 library(USBCamera)
 
+
 ui <- fluidPage(
   titlePanel("USBCamera Package Interactive Demo & Reference"),
   sidebarLayout(
